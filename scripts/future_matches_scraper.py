@@ -4,7 +4,7 @@ import os
 import time
 import random
 
-URL = "https://www.mozzartbet.com/sr/fudbal"  # Mozzart stranica sa ponudom budućih mečeva
+URL = "https://www.mozzartbet.com/sr/kladjenje/sport/1?date=all_days&sort=bytime"
 OUTPUT_DIR = "output"
 EXCEL_FILE = os.path.join(OUTPUT_DIR, "future_matches.xlsx")
 
@@ -14,12 +14,11 @@ MOBILE_UA = (
     "Chrome/120.0.0.0 Mobile Safari/537.36"
 )
 
-def human_sleep(min_sec=3, max_sec=6):
+def human_sleep(min_sec=2, max_sec=5):
     time.sleep(random.uniform(min_sec, max_sec))
 
 def scrape_future_matches():
     os.makedirs(OUTPUT_DIR, exist_ok=True)
-    matches = []
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
@@ -32,38 +31,38 @@ def scrape_future_matches():
         page.goto(URL, timeout=60000)
         time.sleep(random.uniform(5, 8))
 
-        # zatvaranje popupa sa kolačićima
+        # zatvori kolačiće ako postoji popup
         try:
             page.click("text=Sačuvaj i zatvori", timeout=5000)
-            human_sleep(1,2)
+            human_sleep(1, 2)
         except:
             pass
 
-        # Scroll i učitavanje svih mečeva
+        # Scroll + click "Učitaj još"
         while True:
             try:
-                page.evaluate("window.scrollBy(0, 600)")
-                human_sleep(1,2)
+                scroll_height = random.randint(400, 700)
+                page.evaluate(f"window.scrollBy(0, {scroll_height})")
+                human_sleep(1, 2)
                 page.click("text=Učitaj još", timeout=3000)
-                human_sleep(2,4)
+                human_sleep(2, 4)
             except:
                 break
 
-        # Prikupljanje imena timova
-        events = page.query_selector_all(".event-row")  # prilagodi selektor po strukturi sajta
-        for e in events:
+        # Uzmi sve timove
+        matches = []
+        rows = page.query_selector_all("div.event-row")  # svaki meč
+        for row in rows:
             try:
-                home = e.query_selector(".home-team")  # selektor za domaći tim
-                away = e.query_selector(".away-team")  # selektor za gostujući tim
-                matches.append({
-                    "Home": home.inner_text().strip() if home else "",
-                    "Away": away.inner_text().strip() if away else ""
-                })
+                home = row.query_selector("span.event-team.home").inner_text().strip()
+                away = row.query_selector("span.event-team.away").inner_text().strip()
+                matches.append({"Home": home, "Away": away})
             except:
                 continue
 
         browser.close()
 
+    # Sačuvaj u Excel
     df = pd.DataFrame(matches)
     df.to_excel(EXCEL_FILE, index=False)
     print(f"✅ Sačuvano {len(df)} mečeva u {EXCEL_FILE}")
