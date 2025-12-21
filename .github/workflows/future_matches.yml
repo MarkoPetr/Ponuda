@@ -1,0 +1,32 @@
+name: Mozzart Future Matches to Excel
+
+on:
+  workflow_dispatch:
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install playwright pandas openpyxl
+          playwright install chromium
+
+      - name: Run Mozzart future matches scraper
+        run: |
+          python scripts/future_matches_scraper.py
+
+      - name: Upload Excel result
+        uses: actions/upload-artifact@v4
+        with:
+          name: mozzart-future-excel-results
+          path: output/
