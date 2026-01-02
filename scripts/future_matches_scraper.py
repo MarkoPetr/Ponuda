@@ -21,6 +21,14 @@ WEEKDAY_MAP = {
     "pon": 0, "uto": 1, "sre": 2, "čet": 3, "pet": 4, "sub": 5, "ned": 6
 }
 
+# lista liga koje prepoznajemo
+LEAGUES = [
+    "Liga šampiona", "Liga evrope", "Engleska 1", "Španija 1", "Italija 1",
+    "Nemačka 1", "Francuska 1", "Engleska 2", "Afrika kup nacija", "Portugalija 1",
+    "Engleska fa kup", "Španija 2", "Španija 3", "Španija 4", "Španija superkup",
+    "Italija 2", "Italija 3", "Francuska 2", "Holandija 1", "Australija 1", "Škotska 1"
+]
+
 def human_sleep(min_sec=2, max_sec=5):
     time.sleep(random.uniform(min_sec, max_sec))
 
@@ -37,7 +45,7 @@ def get_full_date_from_day(day_str):
     return match_date.strftime("%d.%m.%Y")
 
 def get_full_date_from_ddmm(ddmm_str):
-    """Pretvara 'dd.mm' u 'dd.mm.gggg' sa trenutnom godinom"""
+    """Pretvara 'dd.mm.' u 'dd.mm.gggg' sa trenutnom godinom"""
     try:
         day, month = map(int, ddmm_str.split("."))
         year = datetime.now().year
@@ -87,17 +95,17 @@ def scrape_future_matches():
     while i < len(lines):
         line = lines[i]
 
-        # prepoznaj naziv lige
-        if re.match(r"^[A-ZŠĐČĆŽa-z\s0-9]+$", line) and len(line.split()) <= 4:
+        # ✅ Prepoznaj naziv lige
+        if line in LEAGUES:
             current_league = line
             i += 1
             continue
 
-        # PUN DATUM: "20.01. Uto 16:30" ili "05.02. Pet 20:00"
-        m_full = re.match(r"(\d{2}\.\d{2})\.\s+\S+\s+(\d{2}:\d{2})", line)
+        # 1️⃣ PUN DATUM: "20.01. Uto 15:30" ili "05.02. Pet 20:00"
+        m_full = re.match(r"(\d{2}\.\d{2}\.)\s*(\S+)?\s*(\d{2}:\d{2})", line)
         if m_full:
-            ddmm = m_full.group(1)       # npr. "20.01"
-            time_str = m_full.group(2)   # npr. "16:30"
+            ddmm = m_full.group(1)
+            time_str = m_full.group(3)
             full_date = get_full_date_from_ddmm(ddmm)
 
             try:
@@ -115,7 +123,7 @@ def scrape_future_matches():
                 i += 1
             continue
 
-        # SAMO DAN + VREME: "sub 15:00"
+        # 2️⃣ SAMO DAN + VREME: "sub 15:00"
         m_day = re.match(r"(\S+)\s+(\d{2}:\d{2})", line)
         if m_day:
             day_name = m_day.group(1)
