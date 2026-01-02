@@ -87,11 +87,11 @@ def scrape_future_matches():
     while i < len(lines):
         line = lines[i]
 
-        # ✅ Liga je uvek linija odmah ispod "Default Competition flag"
+        # ✅ Prepoznaj liniju sa Default Competition flag
         if "Default Competition flag" in line:
             if i + 1 < len(lines):
                 current_league = lines[i + 1].strip()
-            i += 2
+            i += 1  # samo pomeramo i za 1
             continue
 
         # PUN DATUM: "20.01. Uto 16:30"
