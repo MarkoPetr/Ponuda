@@ -93,12 +93,11 @@ def scrape_future_matches():
             i += 1
             continue
 
-        # pun datum: "20.01. Uto 15:30"
-        m = re.match(r"(\d{2}\.\d{2}\.)\s+(\S+)\s+(\d{2}:\d{2})", line)
-        if m:
-            ddmm = m.group(1)
-            day_name = m.group(2)
-            time_str = m.group(3)
+        # 1️⃣ PUN DATUM: "20.01. Uto 15:30" ili "05.02. Pet 20:00"
+        m_full = re.match(r"(\d{2}\.\d{2}\.)\s*(\S+)?\s*(\d{2}:\d{2})", line)
+        if m_full:
+            ddmm = m_full.group(1)
+            time_str = m_full.group(3)
             full_date = get_full_date_from_ddmm(ddmm)
 
             try:
@@ -116,11 +115,11 @@ def scrape_future_matches():
                 i += 1
             continue
 
-        # samo dan + vreme: "sub 15:00"
-        m2 = re.match(r"(\S+)\s+(\d{2}:\d{2})", line)
-        if m2:
-            day_name = m2.group(1)
-            time_str = m2.group(2)
+        # 2️⃣ SAMO DAN + VREME: "sub 15:00"
+        m_day = re.match(r"(\S+)\s+(\d{2}:\d{2})", line)
+        if m_day:
+            day_name = m_day.group(1)
+            time_str = m_day.group(2)
             full_date = get_full_date_from_day(day_name)
 
             try:
