@@ -40,12 +40,12 @@ def get_full_date_from_day(day_str):
         return ""
     days_ahead = (target_weekday - today.weekday() + 7) % 7
     if days_ahead == 0:
-        days_ahead = 7  # ako je danas taj dan, uzimamo sledeći
+        days_ahead = 7
     match_date = today + timedelta(days=days_ahead)
     return match_date.strftime("%d.%m.%Y")
 
 def get_full_date_from_ddmm(ddmm_str):
-    """Pretvara 'dd.mm.' u 'dd.mm.gggg' sa trenutnom godinom"""
+    """Pretvara 'dd.mm' u 'dd.mm.gggg' sa trenutnom godinom"""
     try:
         day, month = map(int, ddmm_str.split("."))
         year = datetime.now().year
@@ -95,17 +95,17 @@ def scrape_future_matches():
     while i < len(lines):
         line = lines[i]
 
-        # ✅ Prepoznaj naziv lige
+        # prepoznaj naziv lige iz LEAGUES
         if line in LEAGUES:
             current_league = line
             i += 1
             continue
 
-        # 1️⃣ PUN DATUM: "20.01. Uto 15:30" ili "05.02. Pet 20:00"
-        m_full = re.match(r"(\d{2}\.\d{2}\.)\s*(\S+)?\s*(\d{2}:\d{2})", line)
+        # PUN DATUM: "20.01. Uto 16:30"
+        m_full = re.match(r"(\d{2}\.\d{2})\.\s+\S+\s+(\d{2}:\d{2})", line)
         if m_full:
-            ddmm = m_full.group(1)
-            time_str = m_full.group(3)
+            ddmm = m_full.group(1)       # npr. "20.01"
+            time_str = m_full.group(2)   # npr. "16:30"
             full_date = get_full_date_from_ddmm(ddmm)
 
             try:
@@ -123,7 +123,7 @@ def scrape_future_matches():
                 i += 1
             continue
 
-        # 2️⃣ SAMO DAN + VREME: "sub 15:00"
+        # SAMO DAN + VREME: "sub 15:00"
         m_day = re.match(r"(\S+)\s+(\d{2}:\d{2})", line)
         if m_day:
             day_name = m_day.group(1)
