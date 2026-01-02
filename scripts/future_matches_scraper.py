@@ -1,111 +1,80 @@
-from playwright.sync_api import sync_playwright
+import re
 import pandas as pd
-import os
-import time
-import random
-from datetime import datetime
 
-URL = "https://www.mozzartbet.com/sr/kladjenje/sport/1?date=all_days"
-OUTPUT_DIR = "output"
-EXCEL_FILE = os.path.join(OUTPUT_DIR, "future_matches.xlsx")
+# --- Ovde ubaciš ceo sirovi tekst sa sajta ---
+raw_text = """
+OVDE IDE TVOJ TEKST SA MOZZARTA
+"""
 
-MOBILE_UA = (
-    "Mozilla/5.0 (Linux; Android 13; SM-A166B) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/120.0.0.0 Mobile Safari/537.36"
-)
+# Regularni izrazi za datum, vreme i dan
+date_pattern = re.compile(r'(\d{2}\.\d{2}\.)')       # npr. 20.01.
+time_pattern = re.compile(r'(\d{2}:\d{2})')         # npr. 17:45
+day_pattern = re.compile(r'(Pon|Uto|Sre|Čet|Pet|Sub|Ned)')  # dan u nedelji
+league_pattern = re.compile(r'([A-ZŠĐČĆŽa-zšđčćž0-9\s]+)') # ime lige
 
-def human_sleep(min_sec=3, max_sec=6):
-    time.sleep(random.uniform(min_sec, max_sec))
+lines = [line.strip() for line in raw_text.splitlines() if line.strip()]
 
-# normalize datum, dodaje godinu ako nedostaje
-def normalize_date(date_str):
-    date_str = date_str.strip()
-    now = datetime.now()
-    year = now.year
+matches = []
+current_date = None
+current_league = None
+i = 0
+while i < len(lines):
+    line = lines[i]
 
-    # Ako je format DD.MM. (bez godine)
-    if '.' in date_str and date_str.count('.') == 2:
-        parts = date_str.split('.')
-        if len(parts[2]) == 0:
-            return f"{parts[0]}.{parts[1]}.{year}"
-        return date_str
-    # Ako je format DD.MM (bez poslednje tacke)
-    if '.' in date_str and date_str.count('.') == 1:
-        parts = date_str.split('.')
-        return f"{parts[0]}.{parts[1]}.{year}"
-    return date_str
-
-def scrape_future_matches():
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
-
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        context = browser.new_context(
-            user_agent=MOBILE_UA,
-            viewport={"width": 412, "height": 915},
-            locale="sr-RS"
-        )
-        page = context.new_page()
-        page.goto(URL, timeout=60000)
-        human_sleep(5,8)
-
-        # pokušaj zatvaranja kolačića ako postoji
-        try:
-            page.click("text=Sačuvaj i zatvori", timeout=5000)
-            human_sleep(1,2)
-        except:
-            pass
-
-        # učitavanje svih mečeva
-        while True:
-            try:
-                page.click("text=Učitaj još", timeout=3000)
-                human_sleep(2,4)
-            except:
-                break
-
-        text = page.inner_text("body")
-        browser.close()
-
-    # parsiranje mečeva
-    lines = [line.strip() for line in text.splitlines() if line.strip()]
-    matches = []
-    current_date = ""
-    current_liga = ""
-
-    for i, line in enumerate(lines):
-        # detektuj datum: format npr. 20.01. ili 20.01.2026
-        if any(char.isdigit() for char in line) and ('.' in line):
-            current_date = normalize_date(line)
-            continue
-
-        # detektuj ligu: linije sa "Liga" ili "superkup" ili broj liga (prilagoditi po potrebi)
-        if 'Liga' in line or 'superkup' in line or line.lower() in ['liga šampiona','liga evrope','engleska 1','italija 1']:
-            current_liga = line
-            continue
-
-        # detektuj meč: pretpostavljamo da svaka linija sa home timom sledi format: Home -> Away
-        # Kvota linije ignorišemo
+    # --- Datum i vreme ---
+    date_match = re.match(r'(\d{2}\.\d{2}\.)\s*(\w+)?\s*(\d{2}:\d{2})?', line)
+    if date_match:
+        current_date = date_match.group(1)
+        current_day = date_match.group(2)
+        current_time = date_match.group(3)
+        if current_time is None and i+1 < len(lines):
+            # moguće da je vreme u sledećoj liniji
+            next_line_time = re.match(time_pattern, lines[i+1])
+            if next_line_time:
+                current_time = next_line_time.group(1)
+                i += 1
+        i += 1
+        # Sada očekujemo ligu i timove
+        if i < len(lines):
+            current_league = lines[i]
+            i += 1
         if i+1 < len(lines):
-            home = line
+            home = lines[i]
             away = lines[i+1]
-            # preskoči ako su ovo kvote (+420, 1.65 itd.)
-            if home.startswith('+') or home.replace('.','',1).isdigit():
-                continue
-            if away.startswith('+') or away.replace('.','',1).isdigit():
-                continue
-            # dodaj meč
             matches.append({
-                "Datum": current_date,
-                "Liga": current_liga,
-                "Home": home,
-                "Away": away
+                'Datum': current_date,
+                'Vreme': current_time,
+                'Liga': current_league,
+                'Home': home,
+                'Away': away
             })
+            i += 2
+        continue
 
-    df = pd.DataFrame(matches)
-    df.to_excel(EXCEL_FILE, index=False)
-    print(f"✅ Sačuvano {len(df)} mečeva u {EXCEL_FILE}")
+    # --- Linija sa danom u nedelji i vremenom (koristi prethodni datum) ---
+    day_time_match = re.match(r'(Pon|Uto|Sre|Čet|Pet|Sub|Ned)\s*(\d{2}:\d{2})', line)
+    if day_time_match and current_date is not None:
+        current_time = day_time_match.group(2)
+        # Sada očekujemo ligu i timove
+        if i < len(lines):
+            current_league = lines[i]
+            i += 1
+        if i+1 < len(lines):
+            home = lines[i]
+            away = lines[i+1]
+            matches.append({
+                'Datum': current_date,
+                'Vreme': current_time,
+                'Liga': current_league,
+                'Home': home,
+                'Away': away
+            })
+            i += 2
+        continue
 
-if __name__ == "__main__":
-    scrape_future_matches()
+    i += 1
+
+# --- Kreiranje DataFrame i CSV ---
+df = pd.DataFrame(matches)
+df.to_csv("mecevi.csv", index=False, encoding="utf-8-sig")
+print(df)
