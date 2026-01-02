@@ -1,12 +1,9 @@
 from playwright.sync_api import sync_playwright
 import pandas as pd
-import os
-import time
-import random
-import re
-from datetime import datetime
+import os, time, random
+from datetime import datetime, timedelta
 
-URL = "https://www.mozzartbet.com/sr/kladjenje/sport/1?date=all_days&sort=bytime"
+URL = "https://www.mozzartbet.com/sr/kladjenje/sport/1?date=all_days"
 OUTPUT_DIR = "output"
 EXCEL_FILE = os.path.join(OUTPUT_DIR, "future_matches.xlsx")
 
@@ -16,22 +13,29 @@ MOBILE_UA = (
     "Chrome/120.0.0.0 Mobile Safari/537.36"
 )
 
-def human_sleep(min_sec=2, max_sec=5):
-    time.sleep(random.uniform(min_sec, max_sec))
+DAYS_MAP = {
+    "Pon": 0,
+    "Uto": 1,
+    "Sre": 2,
+    "Čet": 3,
+    "Pet": 4,
+    "Sub": 5,
+    "Ned": 6
+}
 
-def get_full_date(day_month_str):
-    """Pretvara 'dd.mm.' u 'dd.mm.gggg' sa trenutnom godinom"""
-    if not day_month_str:
-        return ""
-    try:
-        day, month = map(int, day_month_str.split("."))
-        year = datetime.now().year
-        return f"{day:02d}.{month:02d}.{year}"
-    except:
-        return ""
+def human_sleep(a=2, b=4):
+    time.sleep(random.uniform(a, b))
+
+def next_weekday(target):
+    today = datetime.now()
+    days_ahead = (target - today.weekday()) % 7
+    if days_ahead == 0:
+        days_ahead = 7
+    return today + timedelta(days=days_ahead)
 
 def scrape_future_matches():
     os.makedirs(OUTPUT_DIR, exist_ok=True)
+    rows = []
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
@@ -42,75 +46,86 @@ def scrape_future_matches():
         )
         page = context.new_page()
         page.goto(URL, timeout=60000)
-        human_sleep(5,8)
+        human_sleep(5, 7)
 
-        # zatvori kolačiće ako postoji
         try:
             page.click("text=Sačuvaj i zatvori", timeout=5000)
-            human_sleep(1,2)
         except:
             pass
 
-        # učitaj sve mečeve
         while True:
             try:
                 page.click("text=Učitaj još", timeout=3000)
-                human_sleep(2,4)
+                human_sleep(2, 3)
             except:
                 break
 
-        text = page.inner_text("body")
+        elements = page.locator("body *").all_inner_texts()
         browser.close()
 
-    # Parsiranje linija
-    lines = [line.strip() for line in text.splitlines() if line.strip()]
-    matches = []
-    current_league = ""
+    current_liga = ""
+    current_date = ""
+    current_time = ""
+
     i = 0
+    while i < len(elements):
+        line = elements[i].strip()
 
-    while i < len(lines):
-        line = lines[i]
+        # LIGA
+        if line and line[0].isupper() and len(line) < 40 and " " in line:
+            if any(x in line.lower() for x in ["liga", "engleska", "španija", "italija", "nemačka"]):
+                current_liga = line
+                i += 1
+                continue
 
-        # Ako je linija naziv lige (npr. "Liga šampiona")
-        if line in [
-            "Liga šampiona","Liga evrope","Engleska 1","Španija 1","Italija 1",
-            "Nemačka 1","Francuska 1","Engleska 2","Afrika kup nacija","Portugalija 1",
-            "Engleska fa kup","Španija 2","Španija 3","Španija 4","Španija superkup",
-            "Italija 2","Italija 3","Francuska 2","Holandija 1","Australija 1","Škotska 1"
-        ]:
-            current_league = line
+        # DATUM + VREME (22.01. Čet 21:00)
+        if "." in line and ":" in line:
+            try:
+                parts = line.split()
+                date_part = parts[0]
+                time_part = parts[-1]
+
+                d, m = map(int, date_part.split("."))
+                year = datetime.now().year
+                current_date = f"{d:02d}.{m:02d}.{year}"
+                current_time = time_part
+            except:
+                pass
             i += 1
             continue
 
-        # Ako je linija datum/vreme, format: "20.01. Uto 15:30"
-        date_match = re.match(r"(\d{2}\.\d{2}\.)\s+\S+\s+(\d{2}:\d{2})", line)
-        if date_match:
-            day_month = date_match.group(1)
-            time_str = date_match.group(2)
-
-            try:
-                home_team = lines[i+1]
-                away_team = lines[i+2]
-
-                full_date = get_full_date(day_month)
-
-                matches.append({
-                    "Datum": full_date,
-                    "Vreme": time_str,
-                    "Liga": current_league,
-                    "Domacin": home_team,
-                    "Gost": away_team
-                })
-                i += 3
-            except IndexError:
-                i += 1
+        # DAN + VREME (Sub 16:00)
+        if line[:3] in DAYS_MAP and ":" in line:
+            day = line[:3]
+            time_part = line.split()[-1]
+            target_date = next_weekday(DAYS_MAP[day])
+            current_date = target_date.strftime("%d.%m.%Y")
+            current_time = time_part
+            i += 1
             continue
+
+        # MEČ (2 linije timova)
+        if current_liga and current_date and current_time:
+            if i + 1 < len(elements):
+                home = line
+                away = elements[i + 1].strip()
+
+                if home.isalpha() or " " in home:
+                    rows.append({
+                        "Datum": current_date,
+                        "Vreme": current_time,
+                        "Liga": current_liga,
+                        "Domacin": home,
+                        "Gost": away
+                    })
+                    i += 2
+                    continue
 
         i += 1
 
-    df = pd.DataFrame(matches)
+    df = pd.DataFrame(rows)
     df.to_excel(EXCEL_FILE, index=False)
-    print(f"✅ Sačuvano {len(df)} mečeva u {EXCEL_FILE}")
+    print(f"✅ Sačuvano {len(df)} mečeva → {EXCEL_FILE}")
 
 if __name__ == "__main__":
     scrape_future_matches()
