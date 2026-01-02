@@ -6,7 +6,7 @@ import random
 import re
 from datetime import datetime, timedelta
 
-URL = "https://www.mozzartbet.com/sr/kladjenje/sport/1?date=all_days&sort=bytime"
+URL = "https://www.mozzartbet.com/sr/kladjenje/sport/1?date=all_days"
 OUTPUT_DIR = "output"
 EXCEL_FILE = os.path.join(OUTPUT_DIR, "future_matches.xlsx")
 
@@ -16,41 +16,39 @@ MOBILE_UA = (
     "Chrome/120.0.0.0 Mobile Safari/537.36"
 )
 
-# --- Helper functions ---
-def human_sleep(min_sec=1, max_sec=3):
+# Mape za dan u nedelji na srpski
+DAYS_MAP = {
+    "Pon": 0,
+    "Uto": 1,
+    "Sre": 2,
+    "Čet": 3,
+    "Pet": 4,
+    "Sub": 5,
+    "Ned": 6
+}
+
+def human_sleep(min_sec=2, max_sec=5):
     time.sleep(random.uniform(min_sec, max_sec))
 
-def get_next_weekday(weekday: int):
-    """Vraća datum narednog weekday (0=ponedeljak, 6=nedelja) od danas."""
+def get_next_weekday(day_name):
+    """Ako je datum samo dan i vreme, vraća datum prve sledeće te nedelje"""
     today = datetime.now()
-    days_ahead = weekday - today.weekday()
-    if days_ahead <= 0:
-        days_ahead += 7
-    return today + timedelta(days=days_ahead)
+    target_weekday = DAYS_MAP.get(day_name, 0)
+    days_ahead = (target_weekday - today.weekday() + 7) % 7
+    if days_ahead == 0:  # ako je danas, uzmi sledeću nedelju
+        days_ahead = 7
+    target_date = today + timedelta(days=days_ahead)
+    return target_date.strftime("%d.%m.%Y")
 
-def parse_date(line: str):
-    """Parsira datum iz linije. Ako nema pun datum, računa prvi odgovarajući dan od danas."""
-    # format pun datum: 20.01. Uto 15:30
-    m = re.match(r"(\d{2}\.\d{2}\.)\s+(\S+)\s+(\d{2}:\d{2})", line)
-    if m:
-        day, month = map(int, m.group(1).split(".")[:2])
+def get_full_date(day_month_str):
+    """Pretvara 'dd.mm.' u 'dd.mm.gggg' sa trenutnom godinom"""
+    try:
+        day, month = map(int, day_month_str.split("."))
         year = datetime.now().year
-        return f"{day:02d}.{month:02d}.{year}", m.group(3)
-    
-    # format samo dan: Sub 15:00
-    m2 = re.match(r"(\S+)\s+(\d{2}:\d{2})", line)
-    if m2:
-        weekday_str = m2.group(1).lower()
-        time_str = m2.group(2)
-        weekdays = {
-            "pon":0, "uto":1, "sre":2, "čet":3, "pet":4, "sub":5, "ned":6
-        }
-        if weekday_str[:3] in weekdays:
-            dt = get_next_weekday(weekdays[weekday_str[:3]])
-            return dt.strftime("%d.%m.%Y"), time_str
-    return None, None
+        return f"{day:02d}.{month:02d}.{year}"
+    except:
+        return ""
 
-# --- Scraping ---
 def scrape_future_matches():
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
@@ -63,68 +61,72 @@ def scrape_future_matches():
         )
         page = context.new_page()
         page.goto(URL, timeout=60000)
-        human_sleep(5,8)
+        human_sleep(5, 8)
 
-        # zatvori kolačiće
+        # zatvori kolačiće ako postoji
         try:
             page.click("text=Sačuvaj i zatvori", timeout=5000)
-            human_sleep(1,2)
+            human_sleep(1, 2)
         except:
             pass
 
-        # scroll do kraja
+        # scroll do kraja stranice
+        previous_height = 0
         while True:
-            try:
-                page.click("text=Učitaj još", timeout=3000)
-                human_sleep(2,4)
-            except:
+            page.evaluate("window.scrollBy(0, document.body.scrollHeight)")
+            human_sleep(1, 2)
+            current_height = page.evaluate("document.body.scrollHeight")
+            if current_height == previous_height:
                 break
+            previous_height = current_height
 
+        # uzmi ceo tekst
         text = page.inner_text("body")
         browser.close()
 
-    # --- Parsiranje ---
+    # Parsiranje linija
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     matches = []
     current_league = ""
     i = 0
 
-    # Predefinisane lige
-    known_leagues = [
-        "Liga šampiona","Liga evrope","Engleska 1","Španija 1","Italija 1",
-        "Nemačka 1","Francuska 1","Engleska 2","Afrika kup nacija","Portugalija 1",
-        "Engleska fa kup","Španija 2","Španija 3","Španija 4","Španija superkup",
-        "Italija 2","Italija 3","Francuska 2","Holandija 1","Australija 1","Škotska 1"
-    ]
-
     while i < len(lines):
         line = lines[i]
 
         # Ako je linija naziv lige
-        if line in known_leagues:
+        if re.match(r".*(Liga|Engleska|Španija|Italija|Nemačka|Francuska|Holandija|Australija|Škotska|Afrika|Portugalija).*", line, re.I):
             current_league = line
             i += 1
             continue
 
-        # Pokušaj da parsira datum i vreme
-        date_str, time_str = parse_date(line)
-        if date_str and time_str:
-            # Sledeće dve linije su timovi
+        # Ako linija sadrži datum i vreme: "20.01. Uto 15:30"
+        date_match = re.match(r"(?:(\d{2}\.\d{2}\.)\s+)?(\w{3})\s+(\d{2}:\d{2})", line)
+        if date_match:
+            day_month = date_match.group(1)
+            day_name = date_match.group(2)
+            time_str = date_match.group(3)
+
+            # odredi puni datum
+            if day_month:
+                full_date = get_full_date(day_month)
+            else:
+                full_date = get_next_weekday(day_name)
+
             try:
-                home_team = lines[i+1]
-                away_team = lines[i+2]
+                home_team = lines[i + 1]
+                away_team = lines[i + 2]
+
                 matches.append({
-                    "Datum": date_str,
+                    "Datum": full_date,
                     "Vreme": time_str,
                     "Liga": current_league,
                     "Domacin": home_team,
                     "Gost": away_team
                 })
                 i += 3
-                continue
             except IndexError:
                 i += 1
-                continue
+            continue
 
         i += 1
 
