@@ -87,15 +87,18 @@ def scrape_future_matches():
     while i < len(lines):
         line = lines[i]
 
-        # ✅ Prepoznaj liniju sa Default Competition flag
+        # ✅ Prepoznaj ligu: linija koja je ispod "Default Competition flag"
         if "Default Competition flag" in line:
-            if i + 1 < len(lines):
-                current_league = lines[i + 1].strip()
-            i += 1  # samo pomeramo i za 1
+            j = i + 1
+            while j < len(lines) and not lines[j].strip():
+                j += 1
+            if j < len(lines):
+                current_league = lines[j].strip()
+            i = j + 1
             continue
 
         # PUN DATUM: "20.01. Uto 16:30"
-        m_full = re.match(r"(\d{2}\.\d{2})\.\s*\S*\s*(\d{2}:\d{2})", line)
+        m_full = re.match(r"(\d{2}\.\d{2})\.\s+\S+\s+(\d{2}:\d{2})", line)
         if m_full:
             ddmm = m_full.group(1)
             time_str = m_full.group(2)
