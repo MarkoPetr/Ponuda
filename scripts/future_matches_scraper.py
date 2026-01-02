@@ -16,7 +16,6 @@ MOBILE_UA = (
     "Chrome/120.0.0.0 Mobile Safari/537.36"
 )
 
-# mapiranje skraćenih dana na int (Python weekday, 0=ponedeljak)
 WEEKDAY_MAP = {
     "pon": 0, "uto": 1, "sre": 2, "čet": 3, "pet": 4, "sub": 5, "ned": 6
 }
@@ -55,7 +54,7 @@ def scrape_future_matches():
         )
         page = context.new_page()
         page.goto(URL, timeout=60000)
-        human_sleep(5,8)
+        human_sleep(5, 8)
 
         # zatvori kolačiće ako postoji
         try:
@@ -64,7 +63,7 @@ def scrape_future_matches():
         except:
             pass
 
-        # učitaj sve mečeve (scroll "kao čovek")
+        # učitaj sve mečeve
         while True:
             try:
                 page.click("text=Učitaj još", timeout=3000)
@@ -72,56 +71,57 @@ def scrape_future_matches():
             except:
                 break
 
-        # uzmi tekst sa stranice
-        text = page.inner_text("body")
-        browser.close()
+        # ⚡ Nova logika: dohvat svih elemenata mečeva
+        match_elements = page.query_selector_all("div.match-row")  # primer, zavisi od Mozzart DOM
+        matches = []
 
-    # Parsiranje linija
-    lines = [line.strip() for line in text.splitlines() if line.strip()]
-    matches = []
-    current_league = ""
-    i = 0
-
-    while i < len(lines):
-        line = lines[i]
-
-        # ✅ Nova logika: sve što nije datum ili dan+vreme tretiramo kao ligu
-        m_full = re.match(r"(\d{2}\.\d{2})\.\s+\S+\s+(\d{2}:\d{2})", line)
-        m_day = re.match(r"(\S+)\s+(\d{2}:\d{2})", line)
-
-        if m_full or m_day:
-            # ovo je meč, ne liga
-            if m_full:
-                ddmm = m_full.group(1)
-                time_str = m_full.group(2)
-                full_date = get_full_date_from_ddmm(ddmm)
-            else:
-                day_name = m_day.group(1)
-                time_str = m_day.group(2)
-                full_date = get_full_date_from_day(day_name)
-
+        for el in match_elements:
+            # dohvat imena timova
             try:
-                home_team = lines[i+1]
-                away_team = lines[i+2]
-                matches.append({
-                    "Datum": full_date,
-                    "Vreme": time_str,
-                    "Liga": current_league,
-                    "Domacin": home_team,
-                    "Gost": away_team
-                })
-                i += 3
-            except IndexError:
-                i += 1
-            continue
+                home_team = el.query_selector(".home-team").inner_text()
+                away_team = el.query_selector(".away-team").inner_text()
+            except:
+                continue
 
-        # 🔹 Sve ostalo je liga
-        current_league = line
-        i += 1
+            # dohvat datuma/vremena
+            try:
+                dt_text = el.query_selector(".match-time").inner_text()  # npr. "20.01. Uto 16:30" ili "sub 15:00"
+            except:
+                dt_text = ""
 
-    df = pd.DataFrame(matches)
-    df.to_excel(EXCEL_FILE, index=False)
-    print(f"✅ Sačuvano {len(df)} mečeva u {EXCEL_FILE}")
+            # parsiranje datuma
+            m_full = re.match(r"(\d{2}\.\d{2})\.\s*\S*\s*(\d{2}:\d{2})", dt_text)
+            if m_full:
+                full_date = get_full_date_from_ddmm(m_full.group(1))
+                time_str = m_full.group(2)
+            else:
+                m_day = re.match(r"(\S+)\s+(\d{2}:\d{2})", dt_text)
+                if m_day:
+                    full_date = get_full_date_from_day(m_day.group(1))
+                    time_str = m_day.group(2)
+                else:
+                    full_date = ""
+                    time_str = ""
+
+            # dohvat lige iz prethodnog sibling elementa koji sadrži "Default Competition flag"
+            league_el = el.query_selector("xpath=preceding-sibling::*[contains(text(), 'Default Competition flag')][1]")
+            if league_el:
+                league_name = league_el.inner_text().replace("Default Competition flag", "").strip()
+            else:
+                league_name = ""
+
+            matches.append({
+                "Datum": full_date,
+                "Vreme": time_str,
+                "Liga": league_name,
+                "Domacin": home_team,
+                "Gost": away_team
+            })
+
+        df = pd.DataFrame(matches)
+        df.to_excel(EXCEL_FILE, index=False)
+        print(f"✅ Sačuvano {len(df)} mečeva u {EXCEL_FILE}")
+        browser.close()
 
 if __name__ == "__main__":
     scrape_future_matches()
