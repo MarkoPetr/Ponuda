@@ -3,7 +3,7 @@ import pandas as pd
 import os
 import time
 import random
-from datetime import datetime, timedelta
+from datetime import datetime
 
 URL = "https://www.mozzartbet.com/sr/kladjenje/sport/1?date=all_days"
 OUTPUT_DIR = "output"
@@ -15,37 +15,26 @@ MOBILE_UA = (
     "Chrome/120.0.0.0 Mobile Safari/537.36"
 )
 
-DAYS_MAP = {"Pon":0,"Uto":1,"Sre":2,"Čet":3,"Pet":4,"Sub":5,"Ned":6}
-
 def human_sleep(min_sec=3, max_sec=6):
     time.sleep(random.uniform(min_sec, max_sec))
 
+# normalize datum, dodaje godinu ako nedostaje
 def normalize_date(date_str):
-    """Vraca DD.MM.YYYY format"""
-    today = datetime.today()
     date_str = date_str.strip()
+    now = datetime.now()
+    year = now.year
 
-    # Dan u nedelji + vreme, npr. "Pon 20:00"
-    if date_str[:3] in DAYS_MAP:
-        target_weekday = DAYS_MAP[date_str[:3]]
-        # pronadji najblizi datum od danas
-        days_ahead = (target_weekday - today.weekday() + 7) % 7
-        if days_ahead == 0:  # danasnji dan, ali mozda vec proslo vreme
-            match_time = datetime.strptime(date_str[4:], "%H:%M").time()
-            if match_time < today.time():
-                days_ahead = 7
-        match_date = today + timedelta(days=days_ahead)
-        return match_date.strftime("%d.%m.%Y")
-
-    # Datum sa danom i mesecem, npr. "22.01." ili "22.01.2026"
-    parts = date_str.split(".")
-    if len(parts) >= 2:
-        day = int(parts[0])
-        month = int(parts[1])
-        year = int(parts[2]) if len(parts) == 3 else today.year
-        return f"{day:02d}.{month:02d}.{year}"
-
-    return date_str  # fallback, nepoznat format
+    # Ako je format DD.MM. (bez godine)
+    if '.' in date_str and date_str.count('.') == 2:
+        parts = date_str.split('.')
+        if len(parts[2]) == 0:
+            return f"{parts[0]}.{parts[1]}.{year}"
+        return date_str
+    # Ako je format DD.MM (bez poslednje tacke)
+    if '.' in date_str and date_str.count('.') == 1:
+        parts = date_str.split('.')
+        return f"{parts[0]}.{parts[1]}.{year}"
+    return date_str
 
 def scrape_future_matches():
     os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -61,7 +50,7 @@ def scrape_future_matches():
         page.goto(URL, timeout=60000)
         human_sleep(5,8)
 
-        # pokušaj zatvaranja kolačića
+        # pokušaj zatvaranja kolačića ako postoji
         try:
             page.click("text=Sačuvaj i zatvori", timeout=5000)
             human_sleep(1,2)
@@ -82,32 +71,37 @@ def scrape_future_matches():
     # parsiranje mečeva
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     matches = []
-    i = 0
-    current_league = ""
-    while i < len(lines):
-        line = lines[i]
+    current_date = ""
+    current_liga = ""
 
-        # prepoznaj ligu (linija zavrsava na brojeve ili poznata imena)
-        if any(x in line for x in ["Liga","Engleska","Španija","Italija","Nemačka","Francuska"]):
-            current_league = line
-            i += 1
+    for i, line in enumerate(lines):
+        # detektuj datum: format npr. 20.01. ili 20.01.2026
+        if any(char.isdigit() for char in line) and ('.' in line):
+            current_date = normalize_date(line)
             continue
 
-        # datum ili dan u nedelji + vreme
-        if line[:3] in DAYS_MAP or "." in line:
-            try:
-                match = {
-                    "Datum": normalize_date(line),
-                    "Liga": current_league,
-                    "Home": lines[i+1],
-                    "Away": lines[i+2]
-                }
-                matches.append(match)
-                i += 3
-            except:
-                i += 1
-        else:
-            i += 1
+        # detektuj ligu: linije sa "Liga" ili "superkup" ili broj liga (prilagoditi po potrebi)
+        if 'Liga' in line or 'superkup' in line or line.lower() in ['liga šampiona','liga evrope','engleska 1','italija 1']:
+            current_liga = line
+            continue
+
+        # detektuj meč: pretpostavljamo da svaka linija sa home timom sledi format: Home -> Away
+        # Kvota linije ignorišemo
+        if i+1 < len(lines):
+            home = line
+            away = lines[i+1]
+            # preskoči ako su ovo kvote (+420, 1.65 itd.)
+            if home.startswith('+') or home.replace('.','',1).isdigit():
+                continue
+            if away.startswith('+') or away.replace('.','',1).isdigit():
+                continue
+            # dodaj meč
+            matches.append({
+                "Datum": current_date,
+                "Liga": current_liga,
+                "Home": home,
+                "Away": away
+            })
 
     df = pd.DataFrame(matches)
     df.to_excel(EXCEL_FILE, index=False)
