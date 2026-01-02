@@ -16,6 +16,7 @@ MOBILE_UA = (
     "Chrome/120.0.0.0 Mobile Safari/537.36"
 )
 
+# mapiranje skraćenih dana na int (Python weekday, 0=ponedeljak)
 WEEKDAY_MAP = {
     "pon": 0, "uto": 1, "sre": 2, "čet": 3, "pet": 4, "sub": 5, "ned": 6
 }
@@ -24,17 +25,19 @@ def human_sleep(min_sec=2, max_sec=5):
     time.sleep(random.uniform(min_sec, max_sec))
 
 def get_full_date_from_day(day_str):
+    """Vrati prvi datum od danas koji pada na dati dan u nedelji"""
     today = datetime.now()
     target_weekday = WEEKDAY_MAP.get(day_str.lower())
     if target_weekday is None:
         return ""
     days_ahead = (target_weekday - today.weekday() + 7) % 7
     if days_ahead == 0:
-        days_ahead = 7
+        days_ahead = 7  # ako je danas taj dan, uzimamo sledeći
     match_date = today + timedelta(days=days_ahead)
     return match_date.strftime("%d.%m.%Y")
 
 def get_full_date_from_ddmm(ddmm_str):
+    """Pretvara 'dd.mm.' u 'dd.mm.gggg' sa trenutnom godinom"""
     try:
         day, month = map(int, ddmm_str.split("."))
         year = datetime.now().year
@@ -71,9 +74,11 @@ def scrape_future_matches():
             except:
                 break
 
+        # uzmi tekst sa stranice
         text = page.inner_text("body")
         browser.close()
 
+    # Parsiranje linija
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     matches = []
     current_league = ""
@@ -89,10 +94,10 @@ def scrape_future_matches():
             continue
 
         # 1️⃣ PUN DATUM: "20.01. Uto 16:30"
-        m_full = re.match(r"(\d{2}\.\d{2}\.)\s*(\S+)\s*(\d{2}:\d{2})", line)
+        m_full = re.match(r"(\d{2}\.\d{2}\.)\s+\S+\s+(\d{2}:\d{2})", line)
         if m_full:
             ddmm = m_full.group(1)
-            time_str = m_full.group(3)
+            time_str = m_full.group(2)
             full_date = get_full_date_from_ddmm(ddmm)
 
             try:
