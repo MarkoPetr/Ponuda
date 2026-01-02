@@ -1,99 +1,99 @@
 import asyncio
-from datetime import datetime, timedelta
-from pathlib import Path
-import pandas as pd
 from playwright.async_api import async_playwright
+import pandas as pd
+from datetime import datetime, timedelta
 
-# Folder za output
-output_folder = Path("output")
-output_folder.mkdir(exist_ok=True)
-output_file = output_folder / "future_matches.xlsx"
+OUTPUT_FILE = "output/future_matches.xlsx"
 
-# Mapa za dane
-DAYS = {
-    "pon": 0,
-    "uto": 1,
-    "sre": 2,
-    "čet": 3,
-    "pet": 4,
-    "sub": 5,
-    "ned": 6
-}
+# Mapa dana u nedelji na engleski/Playwright tekstualni oblik
+DAYS_MAP = {"Pon": 0, "Uto": 1, "Sre": 2, "Čet": 3, "Pet": 4, "Sub": 5, "Ned": 6}
 
-def next_weekday_date(day_name):
+def next_weekday(weekday: int):
+    """Vrati prvi naredni datum od danas za dati weekday (0=ponedeljak, 6=nedelja)."""
     today = datetime.now().date()
-    target = DAYS[day_name.lower()]
-    days_ahead = (target - today.weekday()) % 7
-    if days_ahead == 0:
-        days_ahead = 7
+    days_ahead = weekday - today.weekday()
+    if days_ahead < 0:
+        days_ahead += 7
     return today + timedelta(days=days_ahead)
 
-async def scrape_mozzart():
-    url = "https://www.mozzartbet.com/sr/kladjenje/sport/1?date=all_days"
-    results = []
+def parse_match_date(date_str: str):
+    """Parsira datum: pun datum 'dd.mm.yyyy' ili samo dan 'Pet 15:00'."""
+    date_str = date_str.strip()
+    if "." in date_str:  # dd.mm.yyyy
+        try:
+            return datetime.strptime(date_str, "%d.%m.%Y").date()
+        except:
+            return None
+    else:  # samo dan
+        day_abbr = date_str.split()[0]
+        weekday = DAYS_MAP.get(day_abbr)
+        if weekday is not None:
+            return next_weekday(weekday)
+    return None
 
+async def scrape_mozzart():
     async with async_playwright() as p:
-        browser = await p.chromium.launch()
+        browser = await p.chromium.launch(headless=True)
         page = await browser.new_page()
         print("➡️ Otvaram Mozzart...")
-        await page.goto(url)
-        await page.wait_for_timeout(5000)  # čekanje da se učita JS
+        await page.goto("https://www.mozzartbet.com/sr/kladjenje/sport/1?date=all_days", timeout=60000)
 
-        # Pokušaj klik "Load more" dok postoji
+        # Scroll do kraja stranice
+        previous_height = None
         while True:
-            try:
-                load_more = await page.query_selector("button:has-text('Učitaj još')")
-                if not load_more:
-                    break
-                await load_more.click()
-                await page.wait_for_timeout(2000)
-            except:
+            current_height = await page.evaluate("document.body.scrollHeight")
+            if previous_height == current_height:
                 break
+            previous_height = current_height
+            await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+            await asyncio.sleep(2)  # sačekaj učitavanje novih mečeva
 
         print("✅ Svi mečevi učitani. Parsiram...")
 
-        # Parsiranje mečeva
-        matches = await page.query_selector_all("div[class*='event-row']")
-        for m in matches:
-            text = await m.inner_text()
-            lines = [line.strip() for line in text.split("\n") if line.strip()]
+        matches = []
+        current_league = None
 
-            # Datum i vreme
-            datum = ""
-            vreme = ""
-            if lines:
-                first = lines[0].lower()
-                if any(day in first for day in DAYS):
-                    # Primer: Sub 15:00
-                    day_name, vreme = first.split()[:2]
-                    datum = next_weekday_date(day_name).strftime("%d.%m.%Y")
-                elif "." in first:
-                    # Primer: 20.01. Uto 15:30
-                    parts = first.split()
-                    datum = parts[0] + ".2026"  # dodaje godinu
-                    vreme = parts[-1]
-
-            # Domaćin i Gost
-            if len(lines) >= 3:
-                domacin = lines[1]
-                gost = lines[2]
-                results.append({
-                    "Datum": datum,
-                    "Vreme": vreme,
-                    "Liga": "",  # Mozzart ne daje lako ligu
-                    "Domacin": domacin,
-                    "Gost": gost
-                })
+        # Selektuj sve blokove (liga nazivi + mečevi)
+        elements = await page.query_selector_all("div[class*='event-block'], div[class*='competition-header']")
+        for el in elements:
+            text = (await el.inner_text()).strip()
+            if not text:
+                continue
+            # Liga
+            if "Liga" in text or "Šampiona" in text or "Evrope" in text or "Premijer" in text:
+                current_league = text
+            else:
+                # Meč red
+                lines = [l for l in text.split("\n") if l.strip()]
+                if len(lines) >= 2:
+                    # Prvi deo može biti datum/dan+vreme
+                    date_info = lines[0]
+                    match_time = None
+                    try:
+                        match_time = datetime.strptime(date_info[-5:], "%H:%M").time()
+                    except:
+                        match_time = None
+                    match_date = parse_match_date(date_info)
+                    if match_date and match_time and len(lines) >= 3:
+                        home = lines[1].strip()
+                        away = lines[2].strip()
+                        matches.append({
+                            "Datum": match_date.strftime("%d.%m.%Y"),
+                            "Vreme": match_time.strftime("%H:%M"),
+                            "Liga": current_league,
+                            "Domacin": home,
+                            "Gost": away
+                        })
 
         await browser.close()
+        print(f"🔹 Pronađeno {len(matches)} mečeva na stranici.")
 
-    # Excel
-    if results:
-        df = pd.DataFrame(results)
-        df.to_excel(output_file, index=False)
-        print(f"✅ Sačuvano {len(results)} mečeva u {output_file}")
-    else:
-        print("⚠️ Nema mečeva za sačuvati.")
+        if matches:
+            df = pd.DataFrame(matches)
+            df.to_excel(OUTPUT_FILE, index=False)
+            print(f"✅ Sačuvano {len(matches)} mečeva u {OUTPUT_FILE}")
+        else:
+            print("⚠️ Nema mečeva za sačuvati.")
 
 if __name__ == "__main__":
     asyncio.run(scrape_mozzart())
