@@ -1,80 +1,64 @@
-import re
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.common.by import By
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 import pandas as pd
+import time
 
-# --- Ovde ubaciš ceo sirovi tekst sa sajta ---
-raw_text = """
-OVDE IDE TVOJ TEKST SA MOZZARTA
-"""
+# --- Podešavanja za Chrome ---
+chrome_options = Options()
+chrome_options.add_argument("--headless")  # ukloni ako hoćeš da vidiš browser
+chrome_options.add_argument("--disable-gpu")
+chrome_options.add_argument("--window-size=1920,1080")
 
-# Regularni izrazi za datum, vreme i dan
-date_pattern = re.compile(r'(\d{2}\.\d{2}\.)')       # npr. 20.01.
-time_pattern = re.compile(r'(\d{2}:\d{2})')         # npr. 17:45
-day_pattern = re.compile(r'(Pon|Uto|Sre|Čet|Pet|Sub|Ned)')  # dan u nedelji
-league_pattern = re.compile(r'([A-ZŠĐČĆŽa-zšđčćž0-9\s]+)') # ime lige
+# Putanja do chromedrivera
+service = Service("/path/to/chromedriver")  # promeni na tvoju putanju
 
-lines = [line.strip() for line in raw_text.splitlines() if line.strip()]
+driver = webdriver.Chrome(service=service, options=chrome_options)
 
+# Otvori stranicu sa budućim mečevima
+driver.get("https://www.mozzartbet.com/sr/sport/fudbal/najava")  # promeni URL ako treba
+
+# Sačekaj da se mečevi učitaju (do 20 sekundi)
+wait = WebDriverWait(driver, 20)
+wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "div.upcoming-match")))  # primer selektora
+
+# Skroluj malo da se svi učitaju (ako ima infinite scroll)
+last_height = driver.execute_script("return document.body.scrollHeight")
+while True:
+    driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+    time.sleep(2)
+    new_height = driver.execute_script("return document.body.scrollHeight")
+    if new_height == last_height:
+        break
+    last_height = new_height
+
+# Prikupljanje podataka
 matches = []
-current_date = None
-current_league = None
-i = 0
-while i < len(lines):
-    line = lines[i]
+match_elements = driver.find_elements(By.CSS_SELECTOR, "div.upcoming-match")  # primer selektora
 
-    # --- Datum i vreme ---
-    date_match = re.match(r'(\d{2}\.\d{2}\.)\s*(\w+)?\s*(\d{2}:\d{2})?', line)
-    if date_match:
-        current_date = date_match.group(1)
-        current_day = date_match.group(2)
-        current_time = date_match.group(3)
-        if current_time is None and i+1 < len(lines):
-            # moguće da je vreme u sledećoj liniji
-            next_line_time = re.match(time_pattern, lines[i+1])
-            if next_line_time:
-                current_time = next_line_time.group(1)
-                i += 1
-        i += 1
-        # Sada očekujemo ligu i timove
-        if i < len(lines):
-            current_league = lines[i]
-            i += 1
-        if i+1 < len(lines):
-            home = lines[i]
-            away = lines[i+1]
-            matches.append({
-                'Datum': current_date,
-                'Vreme': current_time,
-                'Liga': current_league,
-                'Home': home,
-                'Away': away
-            })
-            i += 2
+for meč in match_elements:
+    try:
+        date = meč.find_element(By.CSS_SELECTOR, ".match-date").text
+        time_ = meč.find_element(By.CSS_SELECTOR, ".match-time").text
+        league = meč.find_element(By.CSS_SELECTOR, ".match-league").text
+        home = meč.find_element(By.CSS_SELECTOR, ".home-team").text
+        away = meč.find_element(By.CSS_SELECTOR, ".away-team").text
+        matches.append({
+            "Datum": date,
+            "Vreme": time_,
+            "Liga": league,
+            "Home": home,
+            "Away": away
+        })
+    except:
         continue
 
-    # --- Linija sa danom u nedelji i vremenom (koristi prethodni datum) ---
-    day_time_match = re.match(r'(Pon|Uto|Sre|Čet|Pet|Sub|Ned)\s*(\d{2}:\d{2})', line)
-    if day_time_match and current_date is not None:
-        current_time = day_time_match.group(2)
-        # Sada očekujemo ligu i timove
-        if i < len(lines):
-            current_league = lines[i]
-            i += 1
-        if i+1 < len(lines):
-            home = lines[i]
-            away = lines[i+1]
-            matches.append({
-                'Datum': current_date,
-                'Vreme': current_time,
-                'Liga': current_league,
-                'Home': home,
-                'Away': away
-            })
-            i += 2
-        continue
+driver.quit()
 
-    i += 1
-
-# --- Kreiranje DataFrame i CSV ---
+# Spremi u CSV
 df = pd.DataFrame(matches)
-df.to_csv("mecevi.csv", index=False, encoding="utf-8-sig")
+df.to_csv("future_matches.csv", index=False)
 print(df)
