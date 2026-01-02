@@ -1,4 +1,4 @@
-name: Mozzart Future Matches to Excel
+name: Mozzart Future Matches Debug
 
 on:
   workflow_dispatch:
@@ -21,12 +21,12 @@ jobs:
           pip install playwright pandas openpyxl
           playwright install chromium
 
-      - name: Run Mozzart future matches scraper
+      - name: Run Mozzart debug scraper
         run: |
-          python scripts/future_matches_scraper.py
+          python scripts/debug_mozzart_scraper.py
 
-      - name: Upload Excel result
+      - name: Upload debug HTML
         uses: actions/upload-artifact@v4
         with:
-          name: mozzart-future-excel-results
-          path: output/
+          name: mozzart-debug-html
+          path: output/debug_full_page.html
