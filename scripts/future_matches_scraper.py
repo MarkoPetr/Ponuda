@@ -15,42 +15,29 @@ MOBILE_UA = (
     "Chrome/120.0.0.0 Mobile Safari/537.36"
 )
 
-INVALID_LINES_START = [
-    "Pomoc", "Registracija", "Prijava", "Klađenje", "Uživo", "NBA", "Kazino", "Aviator",
-    "Lucky", "NSoft", "Novo", "Virtuali", "Promocije", "MozzApp", "Izdvojena", "Bonus tiket",
-    "Tvoj tiket", "Isprobaj", "Kompletna ponuda", "1 sat", "3 sata", "Sutra", "Danas",
-]
+DAYS_MAP = {"Pon":0,"Uto":1,"Sre":2,"Čet":3,"Pet":4,"Sub":5,"Ned":6}
 
 def human_sleep(min_sec=3, max_sec=6):
     time.sleep(random.uniform(min_sec, max_sec))
 
-def normalize_date(date_str):
-    # datum u formatu DD.MM ili DD.MM.YYYY
-    date_str = date_str.strip()
-    now = datetime.now()
-    year = now.year
-    if '.' in date_str:
-        parts = date_str.split('.')
-        if len(parts) == 2 or (len(parts) == 3 and parts[2] == ''):
-            return f"{parts[0]}.{parts[1]}.{year}"
-        return date_str
-    return date_str
-
-# Pretvori dan u datum (npr. Sub 15:00 -> tačan datum)
+# Pretvara "Sub 15:30" u puni datum i vreme (YYYY-MM-DD HH:MM)
 def day_time_to_datetime(day_str, time_str):
-    days_map = {"Pon":0, "Uto":1, "Sre":2, "Čet":3, "Pet":4, "Sub":5, "Ned":6}
     today = datetime.now()
-    # sub, uto itd.
-    day_abbr = day_str[:3]
-    if day_abbr not in days_map:
+    if day_str not in DAYS_MAP:
         return None
-    target_weekday = days_map[day_abbr]
-    days_ahead = (target_weekday - today.weekday() + 7) % 7
-    if days_ahead == 0 and datetime.strptime(time_str, "%H:%M").time() < today.time():
+
+    days_ahead = (DAYS_MAP[day_str] - today.weekday() + 7) % 7
+    # Ako je dan danas, proveri vreme
+    try:
+        t = datetime.strptime(time_str, "%H:%M").time()
+    except ValueError:
+        return None  # nevalidno vreme
+
+    if days_ahead == 0 and t < today.time():
         days_ahead = 7
-    match_date = today + timedelta(days=days_ahead)
-    dt_str = match_date.strftime("%d.%m.%Y") + " " + time_str
-    return dt_str
+
+    dt = today + timedelta(days=days_ahead)
+    return dt.replace(hour=t.hour, minute=t.minute, second=0, microsecond=0).strftime("%Y-%m-%d %H:%M")
 
 def scrape_future_matches():
     os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -66,14 +53,14 @@ def scrape_future_matches():
         page.goto(URL, timeout=60000)
         human_sleep(5,8)
 
-        # zatvori kolačiće
+        # zatvaranje kolačića ako postoji
         try:
             page.click("text=Sačuvaj i zatvori", timeout=5000)
             human_sleep(1,2)
         except:
             pass
 
-        # učitaj sve mečeve
+        # učitavanje svih mečeva
         while True:
             try:
                 page.click("text=Učitaj još", timeout=3000)
@@ -85,56 +72,42 @@ def scrape_future_matches():
         browser.close()
 
     lines = [line.strip() for line in text.splitlines() if line.strip()]
+
     matches = []
     current_date = ""
+    current_time = ""
     current_liga = ""
-    i = 0
 
-    while i < len(lines):
-        line = lines[i]
-
-        # ignorisi smeće
-        if any(line.startswith(x) for x in INVALID_LINES_START):
-            i += 1
+    for i, line in enumerate(lines):
+        # --- datum i vreme ---
+        if line[:3] in DAYS_MAP:
+            parts = line.split(' ')
+            if len(parts) == 2:
+                dt_full = day_time_to_datetime(parts[0], parts[1])
+                if dt_full:
+                    current_date = dt_full.split(' ')[0]
+                    current_time = dt_full.split(' ')[1]
             continue
 
-        # datum: 20.01. ili pon, uto...
-        if any(char.isdigit() for char in line) and '.' in line:
-            current_date = normalize_date(line)
-            i += 1
-            continue
-
-        # dan + vreme (Sub 15:00)
-        if line[:3] in ["Pon","Uto","Sre","Čet","Pet","Sub","Ned"]:
-            day_time = line.split(' ')
-            dt_full = day_time_to_datetime(day_time[0], day_time[1])
-            if dt_full:
-                current_date = dt_full.split(' ')[0]
-                current_time = dt_full.split(' ')[1]
-            else:
-                current_time = ""
-            i += 1
-            continue
-        else:
-            current_time = ""
-
-        # detektuj ligu
-        if "Liga" in line or "superkup" in line.lower() or "kup" in line.lower():
+        # --- liga ---
+        liga_keywords = ["liga","superkup","fa kup","cup","kup"]
+        if any(k.lower() in line.lower() for k in liga_keywords):
             current_liga = line
-            i += 1
             continue
 
-        # detektuj meč (home + away)
+        # --- detekcija meča ---
         if i+1 < len(lines):
-            home = lines[i]
+            home = line
             away = lines[i+1]
-            # preskoči ako su ovo kvote
-            if home.startswith('+') or home.replace('.','',1).isdigit():
-                i += 1
+
+            # preskoči linije koje nisu timovi
+            skip_keywords = ["+","Kompletna","Sports","Promo","Bonus","Uživo"]
+            if any(home.startswith(k) or away.startswith(k) for k in skip_keywords):
                 continue
-            if away.startswith('+') or away.replace('.','',1).isdigit():
-                i += 2
+            # preskoči ako je broj/kvota
+            if home.replace('.','',1).isdigit() or away.replace('.','',1).isdigit():
                 continue
+
             matches.append({
                 "Datum": current_date,
                 "Vreme": current_time,
@@ -142,9 +115,6 @@ def scrape_future_matches():
                 "Home": home,
                 "Away": away
             })
-            i += 2
-        else:
-            i += 1
 
     df = pd.DataFrame(matches)
     df.to_excel(EXCEL_FILE, index=False)
