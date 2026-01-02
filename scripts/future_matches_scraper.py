@@ -94,7 +94,7 @@ def scrape_future_matches():
             continue
 
         # 1️⃣ PUN DATUM: "20.01. Uto 16:30"
-        m_full = re.match(r"(\d{2}\.\d{2}\.)\s+\S+\s+(\d{2}:\d{2})", line)
+        m_full = re.match(r"^(\d{2}\.\d{2}\.)\s+\S+\s+(\d{2}:\d{2})$", line)
         if m_full:
             ddmm = m_full.group(1)
             time_str = m_full.group(2)
@@ -116,7 +116,7 @@ def scrape_future_matches():
             continue
 
         # 2️⃣ SAMO DAN + VREME: "sub 15:00"
-        m_day = re.match(r"(\S+)\s+(\d{2}:\d{2})", line)
+        m_day = re.match(r"^(\S+)\s+(\d{2}:\d{2})$", line)
         if m_day:
             day_name = m_day.group(1)
             time_str = m_day.group(2)
