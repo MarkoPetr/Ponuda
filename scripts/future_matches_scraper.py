@@ -25,19 +25,17 @@ def human_sleep(min_sec=2, max_sec=5):
     time.sleep(random.uniform(min_sec, max_sec))
 
 def get_full_date_from_day(day_str):
-    """Vrati prvi datum od danas koji pada na dati dan u nedelji"""
     today = datetime.now()
     target_weekday = WEEKDAY_MAP.get(day_str.lower())
     if target_weekday is None:
         return ""
     days_ahead = (target_weekday - today.weekday() + 7) % 7
     if days_ahead == 0:
-        days_ahead = 7  # ako je danas taj dan, uzimamo sledeći
+        days_ahead = 7
     match_date = today + timedelta(days=days_ahead)
     return match_date.strftime("%d.%m.%Y")
 
 def get_full_date_from_ddmm(ddmm_str):
-    """Pretvara 'dd.mm.' u 'dd.mm.gggg' sa trenutnom godinom"""
     try:
         day, month = map(int, ddmm_str.split("."))
         year = datetime.now().year
@@ -87,34 +85,20 @@ def scrape_future_matches():
     while i < len(lines):
         line = lines[i]
 
-        # 1️⃣ PUN DATUM: "20.01. Uto 16:30" ili "05.02. Pet 20:00"
-        m_full = re.match(r"(\d{2}\.\d{2}\.)\s*\S*\s*(\d{2}:\d{2})", line)
-        if m_full:
-            ddmm = m_full.group(1)
-            time_str = m_full.group(2)
-            full_date = get_full_date_from_ddmm(ddmm)
-
-            try:
-                home_team = lines[i+1]
-                away_team = lines[i+2]
-                matches.append({
-                    "Datum": full_date,
-                    "Vreme": time_str,
-                    "Liga": current_league,
-                    "Domacin": home_team,
-                    "Gost": away_team
-                })
-                i += 3
-            except IndexError:
-                i += 1
-            continue
-
-        # 2️⃣ SAMO DAN + VREME: "sub 15:00"
+        # ✅ Nova logika: sve što nije datum ili dan+vreme tretiramo kao ligu
+        m_full = re.match(r"(\d{2}\.\d{2})\.\s+\S+\s+(\d{2}:\d{2})", line)
         m_day = re.match(r"(\S+)\s+(\d{2}:\d{2})", line)
-        if m_day:
-            day_name = m_day.group(1)
-            time_str = m_day.group(2)
-            full_date = get_full_date_from_day(day_name)
+
+        if m_full or m_day:
+            # ovo je meč, ne liga
+            if m_full:
+                ddmm = m_full.group(1)
+                time_str = m_full.group(2)
+                full_date = get_full_date_from_ddmm(ddmm)
+            else:
+                day_name = m_day.group(1)
+                time_str = m_day.group(2)
+                full_date = get_full_date_from_day(day_name)
 
             try:
                 home_team = lines[i+1]
@@ -131,13 +115,8 @@ def scrape_future_matches():
                 i += 1
             continue
 
-        # 3️⃣ BILO KOJA DRUGA LINIA KOJA NIJE TIM I NIJE DATUM/VREME → tretiramo kao LIGU
-        # Pretpostavka: linija nije ime tima ako nema brojeva osim datuma, pa ovo je sigurno liga
-        if not re.match(r"\d{2}\.\d{2}", line) and not re.match(r"\S+\s+\d{2}:\d{2}", line):
-            current_league = line
-            i += 1
-            continue
-
+        # 🔹 Sve ostalo je liga
+        current_league = line
         i += 1
 
     df = pd.DataFrame(matches)
