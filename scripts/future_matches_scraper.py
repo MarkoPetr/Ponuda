@@ -1,47 +1,71 @@
 from playwright.sync_api import sync_playwright
-import time
-import random
+import pandas as pd
+import re
+from datetime import datetime
 
-URL = "https://www.mozzartbet.com/sr/kladjenje/sport/1?date=all_days"
-MOBILE_UA = (
-    "Mozilla/5.0 (Linux; Android 13; SM-A166B) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/120.0.0.0 Mobile Safari/537.36"
-)
+URL = "https://www.mozzartbet.com/sr/kladjenje"
 
-def human_sleep(min_sec=2, max_sec=5):
-    time.sleep(random.uniform(min_sec, max_sec))
-
-def inspect_page_lines():
+def scrape():
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
-        context = browser.new_context(
-            user_agent=MOBILE_UA,
-            viewport={"width": 412, "height": 915},
-            locale="sr-RS"
-        )
-        page = context.new_page()
+        page = browser.new_page()
         page.goto(URL, timeout=60000)
-        human_sleep(5, 8)
+        page.wait_for_timeout(5000)
 
-        # pokušaj učitavanja svih mečeva
-        while True:
-            try:
-                page.click("text=Učitaj još", timeout=3000)
-                human_sleep(2, 4)
-            except:
-                break
-
-        # uzmi sav tekst
         text = page.inner_text("body")
+        lines = [l.strip() for l in text.splitlines() if l.strip()]
         browser.close()
 
-    lines = [line.strip() for line in text.splitlines() if line.strip()]
-    print(f"Ukupno linija na stranici: {len(lines)}\n")
-    
-    # prikaži prvih 1000 linija sa brojem linije
-    for idx, line in enumerate(lines[:1000]):
-        print(f"{idx+1}: {line}")
+    matches = []
+    current_league = None
+    i = 0
+
+    date_re = re.compile(r"\d{2}\.\d{2}\.\s+\w+\s+\d{2}:\d{2}")
+
+    while i < len(lines):
+        line = lines[i]
+
+        # PREPOZNAVANJE LIGE
+        if (
+            line.lower().startswith(("liga ", "engleska", "španija", "italija", "nemačka",
+                                      "francuska", "portugalija", "afrika", "holandija",
+                                      "australija", "saudijska", "egipat", "turska",
+                                      "grčka", "škotska", "izrae", "katar", "kipar",
+                                      "meksiko", "oman", "uae", "vels", "tajland"))
+            and len(line) < 40
+        ):
+            current_league = line
+            i += 1
+            continue
+
+        # PREPOZNAVANJE MEČA
+        if date_re.match(line):
+            try:
+                dt = datetime.strptime(line, "%d.%m. %a %H:%M")
+                date = dt.strftime("%d.%m.%Y")
+                time = dt.strftime("%H:%M")
+
+                home = lines[i + 1]
+                away = lines[i + 2]
+
+                matches.append({
+                    "Datum": date,
+                    "Vreme": time,
+                    "Liga": current_league,
+                    "Domacin": home,
+                    "Gost": away
+                })
+
+                i += 3
+                continue
+            except:
+                pass
+
+        i += 1
+
+    df = pd.DataFrame(matches)
+    df.to_excel("output/future_matches.xlsx", index=False)
+    print(f"✅ Sačuvano {len(df)} mečeva")
 
 if __name__ == "__main__":
-    inspect_page_lines()
+    scrape()
