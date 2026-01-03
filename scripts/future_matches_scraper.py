@@ -16,6 +16,7 @@ MOBILE_UA = (
     "Chrome/120.0.0.0 Mobile Safari/537.36"
 )
 
+# mapiranje skraćenih dana na int (Python weekday, 0=ponedeljak)
 WEEKDAY_MAP = {
     "pon": 0, "uto": 1, "sre": 2, "čet": 3, "pet": 4, "sub": 5, "ned": 6
 }
@@ -24,6 +25,7 @@ def human_sleep(min_sec=2, max_sec=5):
     time.sleep(random.uniform(min_sec, max_sec))
 
 def get_full_date_from_day(day_str):
+    """Vrati prvi datum od danas koji pada na dati dan u nedelji"""
     today = datetime.now()
     target_weekday = WEEKDAY_MAP.get(day_str.lower())
     if target_weekday is None:
@@ -31,9 +33,11 @@ def get_full_date_from_day(day_str):
     days_ahead = (target_weekday - today.weekday() + 7) % 7
     if days_ahead == 0:
         days_ahead = 7
-    return (today + timedelta(days=days_ahead)).strftime("%d.%m.%Y")
+    match_date = today + timedelta(days=days_ahead)
+    return match_date.strftime("%d.%m.%Y")
 
 def get_full_date_from_ddmm(ddmm_str):
+    """Pretvara 'dd.mm' u 'dd.mm.gggg' sa trenutnom godinom"""
     try:
         day, month = map(int, ddmm_str.split("."))
         year = datetime.now().year
@@ -43,7 +47,6 @@ def get_full_date_from_ddmm(ddmm_str):
 
 def scrape_future_matches():
     os.makedirs(OUTPUT_DIR, exist_ok=True)
-    matches = []
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
@@ -71,84 +74,85 @@ def scrape_future_matches():
             except:
                 break
 
-        human_sleep(2)
-        sections = page.locator("section").all()
-
-        for section in sections:
-            # pokušaj dohvatiti h2 ili fallback na prvu liniju teksta
-            try:
-                sport_title = section.locator("h2").first.inner_text(timeout=1000).strip()
-            except:
-                # fallback: uzmi samo prvi span tekst u sekciji
-                try:
-                    sport_title = section.locator("span").first.inner_text(timeout=1000).strip()
-                except:
-                    continue  # ako ništa nema, preskoči
-
-            if "fudbal" not in sport_title.lower():
-                continue
-
-            # sve linije u sekciji
-            rows = section.locator("div").all()
-            current_league = ""
-            i = 0
-
-            while i < len(rows):
-                try:
-                    text = rows[i].inner_text().strip()
-                except:
-                    i += 1
-                    continue
-
-                # prepoznaj naziv lige: ako linija nije datum, može biti liga
-                if not re.match(r"\d{2}\.\d{2}", text) and not re.match(r"\S+\s+\d{2}:\d{2}", text):
-                    current_league = text
-                    i += 1
-                    continue
-
-                # PUN DATUM: "20.01. Uto 16:30"
-                m_full = re.match(r"(\d{2}\.\d{2})\.\s+\S+\s+(\d{2}:\d{2})", text)
-                if m_full:
-                    date = get_full_date_from_ddmm(m_full.group(1))
-                    time_ = m_full.group(2)
-                    try:
-                        home = rows[i+1].inner_text().strip()
-                        away = rows[i+2].inner_text().strip()
-                        matches.append({
-                            "Datum": date,
-                            "Vreme": time_,
-                            "Liga": current_league,
-                            "Domacin": home,
-                            "Gost": away
-                        })
-                        i += 3
-                        continue
-                    except:
-                        i += 1
-
-                # SAMO DAN + VREME: "sub 15:00"
-                m_day = re.match(r"(\S+)\s+(\d{2}:\d{2})", text)
-                if m_day:
-                    date = get_full_date_from_day(m_day.group(1))
-                    time_ = m_day.group(2)
-                    try:
-                        home = rows[i+1].inner_text().strip()
-                        away = rows[i+2].inner_text().strip()
-                        matches.append({
-                            "Datum": date,
-                            "Vreme": time_,
-                            "Liga": current_league,
-                            "Domacin": home,
-                            "Gost": away
-                        })
-                        i += 3
-                        continue
-                    except:
-                        i += 1
-
-                i += 1
-
+        text = page.inner_text("body")
         browser.close()
+
+    # Parsiranje linija
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    print(f"Ukupno linija na stranici: {len(lines)}")
+
+    # --- Pronađi sekciju fudbalskih liga ---
+    football_leagues = []
+    in_football_section = False
+    for line in lines:
+        if line.lower() == "fudbal":
+            in_football_section = True
+            continue
+        if in_football_section:
+            # Ako naiđemo na drugi sport, završavamo sekciju fudbala
+            if line.lower() in ["kosarka","tenis","rukomet","hokej","odbojka","stoni tenis","američki fudbal","futsal","vaterpolo","snuker","ragbi","pikado","boks","kriket"]:
+                break
+            # linije koje nisu samo brojevi su nazivi liga
+            if not line.isdigit():
+                football_leagues.append(line)
+    print(f"Pronađene fudbalske lige: {football_leagues}")
+
+    # --- Parsiranje mečeva ---
+    matches = []
+    current_league = ""
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+
+        # Ako linija odgovara nekoj fudbalskoj ligi, ažuriramo current_league
+        if line in football_leagues:
+            current_league = line
+            i += 1
+            continue
+
+        # PUN DATUM: "20.01. Uto 16:30"
+        m_full = re.match(r"(\d{2}\.\d{2})\.\s+\S+\s+(\d{2}:\d{2})", line)
+        if m_full:
+            ddmm = m_full.group(1)
+            time_str = m_full.group(2)
+            full_date = get_full_date_from_ddmm(ddmm)
+            try:
+                home_team = lines[i+1]
+                away_team = lines[i+2]
+                matches.append({
+                    "Datum": full_date,
+                    "Vreme": time_str,
+                    "Liga": current_league,
+                    "Domacin": home_team,
+                    "Gost": away_team
+                })
+                i += 3
+            except IndexError:
+                i += 1
+            continue
+
+        # SAMO DAN + VREME: "sub 15:00"
+        m_day = re.match(r"(\S+)\s+(\d{2}:\d{2})", line)
+        if m_day:
+            day_name = m_day.group(1)
+            time_str = m_day.group(2)
+            full_date = get_full_date_from_day(day_name)
+            try:
+                home_team = lines[i+1]
+                away_team = lines[i+2]
+                matches.append({
+                    "Datum": full_date,
+                    "Vreme": time_str,
+                    "Liga": current_league,
+                    "Domacin": home_team,
+                    "Gost": away_team
+                })
+                i += 3
+            except IndexError:
+                i += 1
+            continue
+
+        i += 1
 
     df = pd.DataFrame(matches)
     df.to_excel(EXCEL_FILE, index=False)
