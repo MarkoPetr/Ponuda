@@ -10,7 +10,7 @@ MOBILE_UA = (
 
 def inspect_leagues():
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=False)  # headless=False da vidimo stranicu
+        browser = p.chromium.launch(headless=True)  # headless: True
         context = browser.new_context(
             user_agent=MOBILE_UA,
             viewport={"width": 412, "height": 915},
@@ -18,9 +18,16 @@ def inspect_leagues():
         )
         page = context.new_page()
         page.goto(URL, timeout=60000)
-        time.sleep(8)  # čekamo da se svi mečevi učitaju
+        time.sleep(5)  # malo čekanja da se učita sadržaj
 
-        # klik na "Učitaj još" dok postoji
+        # zatvori kolačiće ako postoje
+        try:
+            page.click("text=Sačuvaj i zatvori", timeout=5000)
+            time.sleep(1)
+        except:
+            pass
+
+        # učitaj sve mečeve
         while True:
             try:
                 page.click("text=Učitaj još", timeout=3000)
@@ -28,15 +35,20 @@ def inspect_leagues():
             except:
                 break
 
-        # pronađemo sve elemente koji izgledaju kao naziv lige
-        league_elements = page.query_selector_all("div")  # prvo sve div-ove
-        print("===== POTENCIJALNI NAZIVI LIGA =====")
-        for el in league_elements:
-            text = el.inner_text().strip()
-            if len(text) > 0 and len(text) < 50:  # filtriramo preduge tekstove
-                # opcionalno možemo tražiti "liga", "šampiona", "evrope" itd. da su relevantni
-                if "Liga" in text or "liga" in text or "Superkup" in text or "kup" in text:
-                    print("===", text, "===")
+        # uzmi tekst sa stranice
+        text = page.inner_text("body")
+
+        # splituj po linijama
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+
+        print("=== MOGUĆI NAZIVI LIGA ===")
+        for i, line in enumerate(lines):
+            # prepoznaj liniju "Default Competition flag" i liniju ispod
+            if "Default Competition flag" in line:
+                if i + 1 < len(lines):
+                    liga = lines[i + 1]
+                    print(liga)
+
         browser.close()
 
 if __name__ == "__main__":
