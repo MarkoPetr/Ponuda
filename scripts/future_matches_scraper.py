@@ -25,7 +25,6 @@ def human_sleep(min_sec=2, max_sec=5):
     time.sleep(random.uniform(min_sec, max_sec))
 
 def get_full_date_from_day(day_str):
-    """Vrati prvi datum od danas koji pada na dati dan u nedelji"""
     today = datetime.now()
     target_weekday = WEEKDAY_MAP.get(day_str.lower())
     if target_weekday is None:
@@ -37,7 +36,6 @@ def get_full_date_from_day(day_str):
     return match_date.strftime("%d.%m.%Y")
 
 def get_full_date_from_ddmm(ddmm_str):
-    """Pretvara 'dd.mm' u 'dd.mm.gggg' sa trenutnom godinom"""
     try:
         day, month = map(int, ddmm_str.split("."))
         year = datetime.now().year
@@ -59,14 +57,12 @@ def scrape_future_matches():
         page.goto(URL, timeout=60000)
         human_sleep(5,8)
 
-        # zatvori kolačiće ako postoji
         try:
             page.click("text=Sačuvaj i zatvori", timeout=5000)
             human_sleep(1,2)
         except:
             pass
 
-        # učitaj sve mečeve (scroll "kao čovek")
         while True:
             try:
                 page.click("text=Učitaj još", timeout=3000)
@@ -74,11 +70,9 @@ def scrape_future_matches():
             except:
                 break
 
-        # uzmi tekst sa stranice
         text = page.inner_text("body")
         browser.close()
 
-    # Parsiranje linija
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     matches = []
     current_league = ""
@@ -87,14 +81,22 @@ def scrape_future_matches():
     while i < len(lines):
         line = lines[i]
 
-        # ✅ Prepoznaj ligu: linija koja je ispod "Default Competition flag"
-        if "Default Competition flag" in line:
+        # ✅ PREPOZNAVANJE LIGE PREKO "default competition flag"
+        if "default competition flag" in line.lower():
             j = i + 1
-            while j < len(lines) and not lines[j].strip():
+            while j < len(lines):
+                candidate = lines[j]
+
+                if (
+                    not re.search(r"\d{2}:\d{2}", candidate) and
+                    not re.search(r"\d{2}\.\d{2}", candidate) and
+                    re.search(r"[A-Za-zŠĐČĆŽšđčćž]", candidate)
+                ):
+                    current_league = candidate
+                    break
                 j += 1
-            if j < len(lines):
-                current_league = lines[j].strip()
-            i = j + 1
+
+            i += 1
             continue
 
         # PUN DATUM: "20.01. Uto 16:30"
