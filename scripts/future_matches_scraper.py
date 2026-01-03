@@ -16,7 +16,6 @@ MOBILE_UA = (
     "Chrome/120.0.0.0 Mobile Safari/537.36"
 )
 
-# mapiranje skraćenih dana na int (Python weekday, 0=ponedeljak)
 WEEKDAY_MAP = {
     "pon": 0, "uto": 1, "sre": 2, "čet": 3, "pet": 4, "sub": 5, "ned": 6
 }
@@ -26,22 +25,29 @@ def human_sleep(min_sec=2, max_sec=5):
 
 def get_full_date_from_day(day_str):
     today = datetime.now()
-    target_weekday = WEEKDAY_MAP.get(day_str.lower())
-    if target_weekday is None:
+    wd = WEEKDAY_MAP.get(day_str.lower())
+    if wd is None:
         return ""
-    days_ahead = (target_weekday - today.weekday() + 7) % 7
-    if days_ahead == 0:
-        days_ahead = 7
-    match_date = today + timedelta(days=days_ahead)
-    return match_date.strftime("%d.%m.%Y")
+    delta = (wd - today.weekday() + 7) % 7
+    if delta == 0:
+        delta = 7
+    return (today + timedelta(days=delta)).strftime("%d.%m.%Y")
 
-def get_full_date_from_ddmm(ddmm_str):
+def get_full_date_from_ddmm(ddmm):
     try:
-        day, month = map(int, ddmm_str.split("."))
-        year = datetime.now().year
-        return f"{day:02d}.{month:02d}.{year}"
+        d, m = map(int, ddmm.split("."))
+        return f"{d:02d}.{m:02d}.{datetime.now().year}"
     except:
         return ""
+
+def is_potential_league(line):
+    return (
+        len(line) > 3
+        and not re.search(r"\d{2}:\d{2}", line)
+        and not re.search(r"\d{2}\.\d{2}", line)
+        and not re.match(r"^\d+([.,]\d+)?$", line)
+        and re.search(r"[A-Za-zŠĐČĆŽšđčćž]", line)
+    )
 
 def scrape_future_matches():
     os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -55,11 +61,10 @@ def scrape_future_matches():
         )
         page = context.new_page()
         page.goto(URL, timeout=60000)
-        human_sleep(5,8)
+        human_sleep(6,9)
 
         try:
-            page.click("text=Sačuvaj i zatvori", timeout=5000)
-            human_sleep(1,2)
+            page.click("text=Sačuvaj i zatvori", timeout=4000)
         except:
             pass
 
@@ -73,81 +78,66 @@ def scrape_future_matches():
         text = page.inner_text("body")
         browser.close()
 
-    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    lines = [l.strip() for l in text.splitlines() if l.strip()]
     matches = []
     current_league = ""
-    i = 0
+    last_seen_non_numeric = ""
 
+    i = 0
     while i < len(lines):
         line = lines[i]
 
-        # ✅ PREPOZNAVANJE LIGE PREKO "default competition flag"
-        if "default competition flag" in line.lower():
-            j = i + 1
-            while j < len(lines):
-                candidate = lines[j]
+        # ⬅️ Pamtimo poslednju "čistu" tekstualnu liniju
+        if is_potential_league(line):
+            last_seen_non_numeric = line
 
-                if (
-                    not re.search(r"\d{2}:\d{2}", candidate) and
-                    not re.search(r"\d{2}\.\d{2}", candidate) and
-                    re.search(r"[A-Za-zŠĐČĆŽšđčćž]", candidate)
-                ):
-                    current_league = candidate
-                    break
-                j += 1
-
-            i += 1
-            continue
-
-        # PUN DATUM: "20.01. Uto 16:30"
+        # PUN DATUM
         m_full = re.match(r"(\d{2}\.\d{2})\.\s+\S+\s+(\d{2}:\d{2})", line)
         if m_full:
+            current_league = last_seen_non_numeric
             ddmm = m_full.group(1)
             time_str = m_full.group(2)
             full_date = get_full_date_from_ddmm(ddmm)
 
-            try:
-                home_team = lines[i+1]
-                away_team = lines[i+2]
-                matches.append({
-                    "Datum": full_date,
-                    "Vreme": time_str,
-                    "Liga": current_league,
-                    "Domacin": home_team,
-                    "Gost": away_team
-                })
-                i += 3
-            except IndexError:
-                i += 1
+            home = lines[i+1]
+            away = lines[i+2]
+
+            matches.append({
+                "Datum": full_date,
+                "Vreme": time_str,
+                "Liga": current_league,
+                "Domacin": home,
+                "Gost": away
+            })
+            i += 3
             continue
 
-        # SAMO DAN + VREME: "sub 15:00"
+        # DAN + VREME
         m_day = re.match(r"(\S+)\s+(\d{2}:\d{2})", line)
         if m_day:
-            day_name = m_day.group(1)
+            current_league = last_seen_non_numeric
+            day = m_day.group(1)
             time_str = m_day.group(2)
-            full_date = get_full_date_from_day(day_name)
+            full_date = get_full_date_from_day(day)
 
-            try:
-                home_team = lines[i+1]
-                away_team = lines[i+2]
-                matches.append({
-                    "Datum": full_date,
-                    "Vreme": time_str,
-                    "Liga": current_league,
-                    "Domacin": home_team,
-                    "Gost": away_team
-                })
-                i += 3
-            except IndexError:
-                i += 1
+            home = lines[i+1]
+            away = lines[i+2]
+
+            matches.append({
+                "Datum": full_date,
+                "Vreme": time_str,
+                "Liga": current_league,
+                "Domacin": home,
+                "Gost": away
+            })
+            i += 3
             continue
 
         i += 1
 
     df = pd.DataFrame(matches)
     df.to_excel(EXCEL_FILE, index=False)
-    print(f"✅ Sačuvano {len(df)} mečeva u {EXCEL_FILE}")
+    print(f"✅ Sačuvano {len(df)} mečeva")
 
 if __name__ == "__main__":
     scrape_future_matches()
