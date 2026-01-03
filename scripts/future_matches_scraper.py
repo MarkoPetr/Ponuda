@@ -71,24 +71,37 @@ def scrape_future_matches():
             except:
                 break
 
-        # uzmi sve sekcije sporta
-        sports_sections = page.locator("section").all()
+        human_sleep(2)
+        sections = page.locator("section").all()
 
-        for section in sports_sections:
-            sport_title = section.locator("h2").first.inner_text().strip()
+        for section in sections:
+            # pokušaj dohvatiti h2 ili fallback na prvu liniju teksta
+            try:
+                sport_title = section.locator("h2").first.inner_text(timeout=1000).strip()
+            except:
+                # fallback: uzmi samo prvi span tekst u sekciji
+                try:
+                    sport_title = section.locator("span").first.inner_text(timeout=1000).strip()
+                except:
+                    continue  # ako ništa nema, preskoči
+
             if "fudbal" not in sport_title.lower():
-                continue  # ignorisi sve osim fudbala
+                continue
 
-            league_elements = section.locator("span").all()
+            # sve linije u sekciji
             rows = section.locator("div").all()
-
             current_league = ""
             i = 0
-            while i < len(rows):
-                text = rows[i].inner_text().strip()
 
-                # ako linija liči na naziv lige (span element)
-                if any(text in le.inner_text() for le in league_elements):
+            while i < len(rows):
+                try:
+                    text = rows[i].inner_text().strip()
+                except:
+                    i += 1
+                    continue
+
+                # prepoznaj naziv lige: ako linija nije datum, može biti liga
+                if not re.match(r"\d{2}\.\d{2}", text) and not re.match(r"\S+\s+\d{2}:\d{2}", text):
                     current_league = text
                     i += 1
                     continue
@@ -110,7 +123,7 @@ def scrape_future_matches():
                         })
                         i += 3
                         continue
-                    except IndexError:
+                    except:
                         i += 1
 
                 # SAMO DAN + VREME: "sub 15:00"
@@ -130,7 +143,7 @@ def scrape_future_matches():
                         })
                         i += 3
                         continue
-                    except IndexError:
+                    except:
                         i += 1
 
                 i += 1
